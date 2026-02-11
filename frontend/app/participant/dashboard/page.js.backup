@@ -1,0 +1,458 @@
+'use client'
+
+import { useState, useEffect } from 'react'
+import { useRouter } from 'next/navigation'
+import axios from 'axios'
+import CodeEditor from '../../../components/CodeEditor'
+
+const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000'
+
+export default function ParticipantDashboard() {
+    const router = useRouter()
+    const [questions, setQuestions] = useState([])
+    const [selectedQuestion, setSelectedQuestion] = useState(null)
+    const [language, setLanguage] = useState('Python')
+    const [code, setCode] = useState('')
+    const [runResults, setRunResults] = useState(null)
+    const [submissionResult, setSubmissionResult] = useState(null)
+    const [loading, setLoading] = useState(true)
+    const [running, setRunning] = useState(false)
+    const [submitting, setSubmitting] = useState(false)
+    const [participantData, setParticipantData] = useState(null)
+    const [examEndTime, setExamEndTime] = useState(null)
+    const [timeRemaining, setTimeRemaining] = useState(null)
+    const [tabSwitchCount, setTabSwitchCount] = useState(0)
+    const [examBlocked, setExamBlocked] = useState(false)
+
+    // Tab switch detection
+    useEffect(() => {
+        const handleVisibilityChange = () => {
+            if (document.hidden && !examBlocked) {
+                setTabSwitchCount(prev => {
+                    const newCount = prev + 1
+
+                    if (newCount === 1) {
+                        alert('⚠️ Warning: Tab switching detected! You have 1 warning left. One more tab switch will terminate your exam.')
+                    } else if (newCount >= 2) {
+                        alert('🚫 Exam Terminated: You have exceeded the maximum allowed tab switches (2). Your exam has been terminated and you will be redirected to the home page.')
+                        setExamBlocked(true)
+                        // Clear tokens and redirect to home
+                        localStorage.removeItem('participantToken')
+                        localStorage.removeItem('participantData')
+                        setTimeout(() => {
+                            router.push('/')
+                        }, 2000)
+                    }
+
+                    return newCount
+                })
+            }
+        }
+
+        document.addEventListener('visibilitychange', handleVisibilityChange)
+
+        return () => {
+            document.removeEventListener('visibilitychange', handleVisibilityChange)
+        }
+    }, [examBlocked, router])
+
+    useEffect(() => {
+        const token = localStorage.getItem('participantToken')
+        const data = localStorage.getItem('participantData')
+
+        if (!token) {
+            router.push('/participant/login')
+            return
+        }
+
+        if (data) {
+            const parsedData = JSON.parse(data)
+            setParticipantData(parsedData)
+
+            // Set exam end time if available
+            if (parsedData.examEndTime) {
+                setExamEndTime(new Date(parsedData.examEndTime))
+            }
+        }
+
+        fetchQuestions()
+    }, [])
+
+    // Countdown timer effect
+    useEffect(() => {
+        if (!examEndTime) return
+
+        const interval = setInterval(() => {
+            const now = new Date()
+            const remaining = examEndTime - now
+
+            if (remaining <= 0) {
+                setTimeRemaining(0)
+                clearInterval(interval)
+                alert('Time is up! Your exam has ended.')
+                handleLogout()
+            } else {
+                setTimeRemaining(remaining)
+            }
+        }, 1000)
+
+        return () => clearInterval(interval)
+    }, [examEndTime])
+
+    useEffect(() => {
+        if (selectedQuestion) {
+            // Load starter code for selected language
+            const starterCode = selectedQuestion.starterCodes?.find(sc => sc.language === language)
+            setCode(starterCode?.code || getDefaultCode(language))
+            setRunResults(null)
+            setSubmissionResult(null)
+        }
+    }, [selectedQuestion, language])
+
+    const fetchQuestions = async () => {
+        try {
+            const token = localStorage.getItem('participantToken')
+            const response = await axios.get(
+                `${API_URL}/api/participant/questions`,
+                { headers: { Authorization: `Bearer ${token}` } }
+            )
+
+            setQuestions(response.data.questions || [])
+            if (response.data.questions && response.data.questions.length > 0) {
+                setSelectedQuestion(response.data.questions[0])
+            }
+            setLoading(false)
+        } catch (error) {
+            console.error('Fetch questions error:', error)
+            if (error.response?.status === 401) {
+                localStorage.removeItem('participantToken')
+                router.push('/participant/login')
+            }
+        }
+    }
+
+    const handleRun = async () => {
+        if (!selectedQuestion || !code) return
+
+        setRunning(true)
+        setRunResults(null)
+
+        try {
+            const token = localStorage.getItem('participantToken')
+            const response = await axios.post(
+                `${API_URL}/api/participant/run`,
+                {
+                    questionId: selectedQuestion.id,
+                    language,
+                    code
+                },
+                { headers: { Authorization: `Bearer ${token}` } }
+            )
+
+            setRunResults(response.data.results)
+        } catch (error) {
+            alert(error.response?.data?.error || 'Failed to run code')
+        } finally {
+            setRunning(false)
+        }
+    }
+
+    const handleSubmit = async () => {
+        if (!selectedQuestion || !code) return
+
+        const confirmed = confirm('Are you sure you want to submit? This will be evaluated against all testcases.')
+        if (!confirmed) return
+
+        setSubmitting(true)
+        setSubmissionResult(null)
+
+        try {
+            const token = localStorage.getItem('participantToken')
+            const response = await axios.post(
+                `${API_URL}/api/participant/submit`,
+                {
+                    questionId: selectedQuestion.id,
+                    language,
+                    code
+                },
+                { headers: { Authorization: `Bearer ${token}` } }
+            )
+
+            setSubmissionResult(response.data.submission)
+            alert(`Submitted! Score: ${response.data.submission.score.toFixed(1)}%`)
+        } catch (error) {
+            alert(error.response?.data?.error || 'Failed to submit code')
+        } finally {
+            setSubmitting(false)
+        }
+    }
+
+    const handleLogout = () => {
+        localStorage.removeItem('participantToken')
+        localStorage.removeItem('participantData')
+        router.push('/')
+    }
+
+    if (loading) {
+        return (
+            <div className="min-h-screen flex items-center justify-center">
+                <div className="text-2xl gradient-text animate-pulse">Loading...</div>
+            </div>
+        )
+    }
+
+    return (
+        <div className="min-h-screen p-4 flex flex-col">
+            {/* Header */}
+            <div className="mb-4">
+                <div className="flex justify-between items-center">
+                    <div>
+                        <h1 className="text-2xl font-bold gradient-text">
+                            {participantData?.examTitle || 'Coding Exam'}
+                        </h1>
+                        <p className="text-sm text-gray-400">Participant: {participantData?.participantId}</p>
+                    </div>
+                    <div className="flex items-center space-x-4">
+                        {/* Tab Switch Counter */}
+                        <div className={`px-4 py-2 rounded-lg font-bold ${tabSwitchCount === 0
+                            ? 'bg-green-500/20 text-green-400'
+                            : tabSwitchCount === 1
+                                ? 'bg-yellow-500/20 text-yellow-400'
+                                : 'bg-red-500/20 text-red-400'
+                            }`}>
+                            🔄 Tab Switches: {tabSwitchCount}/2
+                        </div>
+                        {timeRemaining !== null && (
+                            <div className={`px-4 py-2 rounded-lg font-bold text-lg ${timeRemaining <= 5 * 60 * 1000
+                                ? 'bg-red-500/20 text-red-400 animate-pulse'
+                                : timeRemaining <= 15 * 60 * 1000
+                                    ? 'bg-yellow-500/20 text-yellow-400'
+                                    : 'bg-green-500/20 text-green-400'
+                                }`}>
+                                ⏱️ {formatTime(timeRemaining)}
+                            </div>
+                        )}
+                        <button onClick={handleLogout} className="btn btn-secondary">
+                            Logout
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            {/* Main Content */}
+            <div className="flex-1 grid lg:grid-cols-4 gap-4">
+                {/* Questions Sidebar */}
+                <div className="lg:col-span-1">
+                    <div className="card h-full">
+                        <h2 className="font-bold mb-4">Questions</h2>
+                        <div className="space-y-2">
+                            {questions.map((q) => (
+                                <button
+                                    key={q.id}
+                                    onClick={() => setSelectedQuestion(q)}
+                                    className={`w-full text-left p-3 rounded-lg transition-all ${selectedQuestion?.id === q.id
+                                        ? 'bg-primary-500/20 border border-primary-500'
+                                        : 'bg-card hover:bg-card-hover border border-border'
+                                        }`}
+                                >
+                                    <div className="font-medium">{q.title}</div>
+                                    <div className="text-xs text-gray-400 mt-1">
+                                        {q.timeLimit}s | {q.memoryLimit}MB
+                                    </div>
+                                </button>
+                            ))}
+                        </div>
+                    </div>
+                </div>
+
+                {/* Question & Code Editor */}
+                <div className="lg:col-span-3 space-y-4">
+                    {selectedQuestion && (
+                        <>
+                            {/* Question Details */}
+                            <div className="card">
+                                <h2 className="text-2xl font-bold mb-4">{selectedQuestion.title}</h2>
+
+                                <div className="space-y-4 text-gray-300">
+                                    <div>
+                                        <h3 className="font-bold text-white mb-2">Description</h3>
+                                        <p className="whitespace-pre-wrap">{selectedQuestion.description}</p>
+                                    </div>
+
+                                    {selectedQuestion.inputFormat && (
+                                        <div>
+                                            <h3 className="font-bold text-white mb-2">Input Format</h3>
+                                            <p className="whitespace-pre-wrap">{selectedQuestion.inputFormat}</p>
+                                        </div>
+                                    )}
+
+                                    {selectedQuestion.outputFormat && (
+                                        <div>
+                                            <h3 className="font-bold text-white mb-2">Output Format</h3>
+                                            <p className="whitespace-pre-wrap">{selectedQuestion.outputFormat}</p>
+                                        </div>
+                                    )}
+
+                                    {selectedQuestion.constraints && (
+                                        <div>
+                                            <h3 className="font-bold text-white mb-2">Constraints</h3>
+                                            <p className="whitespace-pre-wrap">{selectedQuestion.constraints}</p>
+                                        </div>
+                                    )}
+
+                                    {/* Visible Testcases */}
+                                    <div>
+                                        <h3 className="font-bold text-white mb-2">Sample Testcases</h3>
+                                        <div className="space-y-3">
+                                            {selectedQuestion.testcases?.map((tc, idx) => (
+                                                <div key={idx} className="bg-card border border-border rounded-lg p-4">
+                                                    <div className="grid md:grid-cols-2 gap-4">
+                                                        <div>
+                                                            <div className="text-sm font-medium text-gray-400 mb-1">Input</div>
+                                                            <pre className="code-block">{tc.input}</pre>
+                                                        </div>
+                                                        <div>
+                                                                >
+                                                            {selectedQuestion.allowedLanguages?.split(',').map((lang) => (
+                                                                <option key={lang} value={lang.trim()}>{lang.trim()}</option>
+                                                            ))}
+                                                        </select>
+                                                    </div>
+
+                                                    <CodeEditor
+                                                        language={language}
+                                                        value={code}
+                                                        onChange={setCode}
+                                                    />
+
+                                                    <div className="flex gap-4 mt-4">
+                                                        <button
+                                                            onClick={handleRun}
+                                                            disabled={running || !code}
+                                                            className="btn bg-blue-600 hover:bg-blue-700 text-white flex-1"
+                                                        >
+                                                            {running ? 'Running...' : '▶ Run Code'}
+                                                        </button>
+                                                        <button
+                                                            onClick={handleSubmit}
+                                                            disabled={submitting || !code}
+                                                            className="btn btn-success flex-1"
+                                                        >
+                                                            {submitting ? 'Submitting...' : '✓ Submit'}
+                                                        </button>
+                                                    </div>
+                                                </div>
+
+                                                        {/* Run Results */ }
+                                                        { runResults && (
+                                                    <div className="card animate-slide-up">
+                                                        <h3 className="font-bold mb-4">Run Results (Visible Testcases Only)</h3>
+                                                        <div className="space-y-3">
+                                                            {runResults.map((result, idx) => (
+                                                                <div
+                                                                    key={idx}
+                                                                    className={`p-4 rounded-lg border ${result.passed
+                                                                        ? 'bg-green-500/10 border-green-500/30'
+                                                                        : 'bg-red-500/10 border-red-500/30'
+                                                                        }`}
+                                                                >
+                                                                    <div className="flex justify-between items-center mb-2">
+                                                                        <span className="font-medium">Testcase {idx + 1}</span>
+                                                                        <span className={result.passed ? 'text-green-400' : 'text-red-400'}>
+                                                                            {result.passed ? '✓ PASSED' : '✗ FAILED'}
+                                                                        </span>
+                                                                    </div>
+
+                                                                    <div className="grid md:grid-cols-3 gap-4 text-sm">
+                                                                        <div>
+                                                                            <div className="text-gray-400 mb-1">Input</div>
+                                                                            <pre className="code-block">{result.input}</pre>
+                                                                        </div>
+                                                                        <div>
+                                                                            <div className="text-gray-400 mb-1">Expected</div>
+                                                                            <pre className="code-block">{result.expectedOutput}</pre>
+                                                                        </div>
+                                                                        <div>
+                                                                            <div className="text-gray-400 mb-1">Your Output</div>
+                                                                            <pre className={`code-block ${result.passed ? '' : 'text-red-400'}`}>
+                                                                                {result.actualOutput || result.error}
+                                                                            </pre>
+                                                                        </div>
+                                                                    </div>
+
+                                                                    <div className="text-xs text-gray-400 mt-2">
+                                                                        Execution time: {result.executionTime}ms
+                                                                    </div>
+                                                                </div>
+                                                            ))}
+                                                        </div>
+                                                    </div>
+                                                )}
+
+                                            {/* Submission Result */}
+                                            {submissionResult && (
+                                                <div className="card animate-slide-up">
+                                                    <h3 className="font-bold mb-4">Submission Result</h3>
+                                                    <div className={`p-6 rounded-lg text-center ${submissionResult.score >= 70
+                                                        ? 'bg-green-500/10 border border-green-500/30'
+                                                        : submissionResult.score >= 40
+                                                            ? 'bg-yellow-500/10 border border-yellow-500/30'
+                                                            : 'bg-red-500/10 border border-red-500/30'
+                                                        }`}>
+                                                        <div className={`text-5xl font-bold mb-2 ${submissionResult.score >= 70 ? 'text-green-400' : submissionResult.score >= 40 ? 'text-yellow-400' : 'text-red-400'
+                                                            }`}>
+                                                            {submissionResult.score.toFixed(1)}%
+                                                        </div>
+                                                        <div className="text-xl mb-2">
+                                                            {submissionResult.passedTests} / {submissionResult.totalTests} tests passed
+                                                        </div>
+                                                        <div className="text-sm text-gray-400">
+                                                            Average execution time: {submissionResult.executionTime?.toFixed(2)}ms
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            )}
+                                        </>
+                    )}
+                                    </div>
+                                </div>
+                            </div>
+                            )
+}
+
+                            function getDefaultCode(language) {
+    switch (language) {
+        case 'C':
+                            return `#include <stdio.h>
+
+                                int main() {
+    // Your code here
+    return 0;
+}`
+                                case 'C++':
+                                return `#include <bits /stdc++.h>
+                                using namespace std;
+
+                                int main() {
+    // Your code here
+    return 0;
+}`
+                                case 'Python':
+                                default:
+                                return `# Your code here
+                                def solve():
+                                pass
+
+                                if __name__ == "__main__":
+                                solve()`
+    }
+}
+
+                                function formatTime(milliseconds) {
+    const totalSeconds = Math.floor(milliseconds / 1000)
+                                const hours = Math.floor(totalSeconds / 3600)
+                                const minutes = Math.floor((totalSeconds % 3600) / 60)
+                                const seconds = totalSeconds % 60
+
+                                return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`
+}

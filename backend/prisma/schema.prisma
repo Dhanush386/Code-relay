@@ -1,0 +1,143 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Organizer {
+  id        Int      @id @default(autoincrement())
+  email     String   @unique
+  password  String // Hashed with bcrypt
+  name      String?
+  createdAt DateTime @default(now())
+
+  questions Question[]
+  exams     Exam[]
+}
+
+model Exam {
+  id          Int       @id @default(autoincrement())
+  code        String    @unique // Exam code for participants to join
+  title       String
+  description String?
+  sequence    Int       @default(0) // New: Order of levels (1: Easy, 2: Medium, etc.)
+  startTime   DateTime?
+  endTime     DateTime?
+  createdAt   DateTime  @default(now())
+  organizerId Int
+
+  organizer          Organizer            @relation(fields: [organizerId], references: [id], onDelete: Cascade)
+  participants       Participant[]
+  questions          Question[]
+  QuestionAssignment QuestionAssignment[]
+}
+
+model Participant {
+  id            Int      @id @default(autoincrement())
+  participantId String   @unique // Now globally unique (Team Name)
+  collegeName   String?
+  createdAt     DateTime @default(now())
+
+  exams              Exam[] // Implicit many-to-many: participant can be in multiple exams (levels)
+  submissions        Submission[]
+  assignments        QuestionAssignment[]
+}
+
+model Question {
+  id               Int      @id @default(autoincrement())
+  title            String
+  description      String
+  inputFormat      String
+  outputFormat     String
+  constraints      String
+  timeLimit        Int      @default(5) // in seconds
+  memoryLimit      Int      @default(256) // in MB
+  maxMarks         Int      @default(100) // Maximum marks for this question
+  allowedLanguages String   @default("C,C++,Python") // Comma-separated
+  solution         String? // Reference solution (organizer-only, hidden from participants)
+  solutionLanguage String?  @default("Python") // Language of the solution
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+  organizerId      Int
+  examId           Int?
+
+  organizer          Organizer            @relation(fields: [organizerId], references: [id], onDelete: Cascade)
+  exam               Exam?                @relation(fields: [examId], references: [id], onDelete: SetNull)
+  starterCodes       StarterCode[]
+  solutionCodes      SolutionCode[]
+  testcases          Testcase[]
+  submissions        Submission[]
+  QuestionAssignment QuestionAssignment[]
+}
+
+model StarterCode {
+  id         Int      @id @default(autoincrement())
+  questionId Int
+  language   String // "C", "C++", "Python", or "Java"
+  code       String
+  createdAt  DateTime @default(now())
+
+  question Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
+
+  @@unique([questionId, language])
+}
+
+model SolutionCode {
+  id         Int      @id @default(autoincrement())
+  questionId Int
+  language   String // "C", "C++", "Python", or "Java"
+  code       String
+  createdAt  DateTime @default(now())
+
+  question Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
+
+  @@unique([questionId, language])
+}
+
+model Testcase {
+  id             Int      @id @default(autoincrement())
+  questionId     Int
+  input          String
+  expectedOutput String
+  visibility     String   @default("VISIBLE") // "VISIBLE" or "HIDDEN"
+  createdAt      DateTime @default(now())
+
+  question Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
+}
+
+model Submission {
+  id            Int      @id @default(autoincrement())
+  participantId Int
+  questionId    Int
+  language      String
+  code          String
+  score         Float    @default(0)
+  totalTests    Int      @default(0)
+  passedTests   Int      @default(0)
+  status        String   @default("PENDING") // "PENDING", "RUNNING", "COMPLETED", "ERROR"
+  executionTime Float? // in milliseconds
+  createdAt     DateTime @default(now())
+
+  participant Participant @relation(fields: [participantId], references: [id], onDelete: Cascade)
+  question    Question    @relation(fields: [questionId], references: [id], onDelete: Cascade)
+}
+
+model QuestionAssignment {
+  id            Int      @id @default(autoincrement())
+  participantId Int
+  examId        Int
+  questionId    Int
+  assignedAt    DateTime @default(now())
+
+  participant Participant @relation(fields: [participantId], references: [id], onDelete: Cascade)
+  exam        Exam        @relation(fields: [examId], references: [id], onDelete: Cascade)
+  question    Question    @relation(fields: [questionId], references: [id], onDelete: Cascade)
+
+  @@unique([participantId, examId])
+}

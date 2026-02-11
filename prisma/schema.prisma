@@ -1,0 +1,115 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model Exam {
+  id          Int           @id @default(autoincrement())
+  code        String        @unique
+  title       String
+  description String?
+  startTime   DateTime?
+  endTime     DateTime?
+  createdAt   DateTime      @default(now())
+  organizerId Int
+  sequence    Int           @default(0)
+  Organizer   Organizer     @relation(fields: [organizerId], references: [id], onDelete: Cascade)
+  Question    Question[]
+  Participant Participant[]
+}
+
+model Organizer {
+  id        Int        @id @default(autoincrement())
+  email     String     @unique
+  password  String
+  name      String?
+  createdAt DateTime   @default(now())
+  Exam      Exam[]
+  Question  Question[]
+}
+
+model Participant {
+  id            Int          @id @default(autoincrement())
+  participantId String       @unique
+  createdAt     DateTime     @default(now())
+  collegeName   String?
+  Submission    Submission[]
+  Exam          Exam[]
+}
+
+model Question {
+  id               Int            @id @default(autoincrement())
+  title            String
+  description      String
+  inputFormat      String
+  outputFormat     String
+  constraints      String
+  timeLimit        Int            @default(5)
+  memoryLimit      Int            @default(256)
+  maxMarks         Int            @default(100)
+  allowedLanguages String         @default("C,C++,Python")
+  solution         String?
+  solutionLanguage String?        @default("Python")
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime
+  organizerId      Int
+  examId           Int?
+  Exam             Exam?          @relation(fields: [examId], references: [id])
+  Organizer        Organizer      @relation(fields: [organizerId], references: [id], onDelete: Cascade)
+  SolutionCode     SolutionCode[]
+  StarterCode      StarterCode[]
+  Submission       Submission[]
+  Testcase         Testcase[]
+}
+
+model SolutionCode {
+  id         Int      @id @default(autoincrement())
+  questionId Int
+  language   String
+  code       String
+  createdAt  DateTime @default(now())
+  Question   Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
+
+  @@unique([questionId, language])
+}
+
+model StarterCode {
+  id         Int      @id @default(autoincrement())
+  questionId Int
+  language   String
+  code       String
+  createdAt  DateTime @default(now())
+  Question   Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
+
+  @@unique([questionId, language])
+}
+
+model Submission {
+  id            Int         @id @default(autoincrement())
+  participantId Int
+  questionId    Int
+  language      String
+  code          String
+  score         Float       @default(0)
+  totalTests    Int         @default(0)
+  passedTests   Int         @default(0)
+  status        String      @default("PENDING")
+  executionTime Float?
+  createdAt     DateTime    @default(now())
+  Participant   Participant @relation(fields: [participantId], references: [id], onDelete: Cascade)
+  Question      Question    @relation(fields: [questionId], references: [id], onDelete: Cascade)
+}
+
+model Testcase {
+  id             Int      @id @default(autoincrement())
+  questionId     Int
+  input          String
+  expectedOutput String
+  visibility     String   @default("VISIBLE")
+  createdAt      DateTime @default(now())
+  Question       Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
+}
