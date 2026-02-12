@@ -18,8 +18,9 @@ export default function ParticipantLogin() {
         e.preventDefault()
         setLoading(true)
 
+        const endpoint = isRegister ? '/api/participant/register' : '/api/participant/login'
         try {
-            const endpoint = isRegister ? '/api/participant/register' : '/api/participant/login'
+
             const submissionData = {
                 participantId: formData.participantId.trim(),
                 collegeName: isRegister ? formData.collegeName.trim() : undefined

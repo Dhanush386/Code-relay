@@ -20,8 +20,9 @@ export default function OrganizerLogin() {
         setError('')
         setLoading(true)
 
+        const endpoint = '/api/organizer/login'
         try {
-            const endpoint = '/api/organizer/login'
+
             const response = await axios.post(`${API_URL}${endpoint}`, formData)
 
             if (response.data.token) {
