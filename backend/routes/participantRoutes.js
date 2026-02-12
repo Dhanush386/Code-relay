@@ -425,12 +425,27 @@ router.get('/questions', authenticateParticipant, async (req, res) => {
         }
 
         // Shuffle questions deterministically based on participant and exam
-        const seed = `${req.participantId}-${examId}`;
-        const shuffledQuestions = questions.sort((a, b) => {
-            const hashA = crypto.createHash('sha256').update(seed + a.id).digest('hex');
-            const hashB = crypto.createHash('sha256').update(seed + b.id).digest('hex');
-            return hashA.localeCompare(hashB);
-        });
+        const seedStr = `${req.participantId}-${examId}`;
+
+        // Simple seeded random number generator (Mulberry32 inspired)
+        const seededRandom = (s) => {
+            let h = 0xdeadbeef;
+            for (let i = 0; i < s.length; i++) {
+                h = Math.imul(h ^ s.charCodeAt(i), 0x517cc1b7);
+            }
+            return () => {
+                h = Math.imul(h ^ (h >>> 16), 0x22468225);
+                h = Math.imul(h ^ (h >>> 13), 0x3266489a);
+                return ((h ^= h >>> 16) >>> 0) / 4294967296;
+            };
+        };
+
+        const rng = seededRandom(seedStr);
+        const shuffledQuestions = [...questions];
+        for (let i = shuffledQuestions.length - 1; i > 0; i--) {
+            const j = Math.floor(rng() * (i + 1));
+            [shuffledQuestions[i], shuffledQuestions[j]] = [shuffledQuestions[j], shuffledQuestions[i]];
+        }
 
         res.json({ questions: shuffledQuestions });
     } catch (error) {
