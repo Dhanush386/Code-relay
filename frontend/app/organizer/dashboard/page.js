@@ -1496,7 +1496,7 @@ function LeaderboardTab({ exams, setNotification }) {
                     >
                         <option value="">-- Select Exam --</option>
                         {exams.map((exam) => (
-                            <option key={exam.id} value={exam.id}>{exam.title}</option>
+                            <option key={exam.id} value={exam.id}>{exam.title} ({exam.code})</option>
                         ))}
                     </select>
                     <button
@@ -1698,7 +1698,7 @@ function VisitorsTab({ exams, setNotification, setConfirmation }) {
 
     const handleRemoveParticipant = (visitor) => {
         setConfirmation({
-            message: `Are you sure you want to remove team "${visitor.teamName}" from "${visitor.examTitle}"? This will delete all their code and progress for this level.`,
+            message: `Are you sure you want to remove team "${visitor.teamName}" from "${visitor.examTitle} (${visitor.examCode})"? This will delete all their code and progress for this level.`,
             confirmText: 'Remove Participant',
             isDangerous: true,
             onConfirm: async () => {
@@ -1734,7 +1734,7 @@ function VisitorsTab({ exams, setNotification, setConfirmation }) {
                     >
                         <option value="all">All Exams</option>
                         {exams.map(exam => (
-                            <option key={exam.id} value={exam.id}>{exam.title}</option>
+                            <option key={exam.id} value={exam.id}>{exam.title} ({exam.code})</option>
                         ))}
                     </select>
                 </div>
@@ -1761,7 +1761,7 @@ function VisitorsTab({ exams, setNotification, setConfirmation }) {
                                         <div className="font-bold">{v.teamName}</div>
                                         <div className="text-xs text-gray-500">{v.collegeName || 'N/A'}</div>
                                     </td>
-                                    <td className="px-6 py-4 text-sm text-gray-300">{v.examTitle}</td>
+                                    <td className="px-6 py-4 text-sm text-gray-300">{v.examTitle} ({v.examCode})</td>
                                     <td className="px-6 py-4 text-center">
                                         <span className={`px-2 py-1 rounded-full text-[10px] font-bold uppercase border ${v.submissionsCount > 0
                                             ? 'bg-green-500/10 text-green-400 border-green-500/20'

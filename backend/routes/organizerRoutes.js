@@ -896,6 +896,7 @@ router.get('/visitors', authenticateOrganizer, async (req, res) => {
                     collegeName: participant.collegeName || 'N/A',
                     examId: exam.id,
                     examTitle: exam.title,
+                    examCode: exam.code,
                     submissionsCount,
                     joinedAt: participant.createdAt, // This is when they joined the platform, not necessarily the exam
                     status: submissionsCount > 0 ? 'Active' : 'Visitor'
