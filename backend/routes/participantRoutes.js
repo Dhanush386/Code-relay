@@ -288,8 +288,13 @@ router.get('/exams', authenticateParticipant, async (req, res) => {
                         unlocked = true; // No questions = automatic unlock next
                     }
                 } else {
-                    unlocked = false; // Haven't joined previous level yet
+                    // NEW: Unlock if ANY exam in the previous level has timed out, even if not joined
+                    const anyPrevTimedOut = prevLevel.exams.some(e => {
+                        return e.endTime && now.getTime() > new Date(e.endTime).getTime();
+                    });
+                    unlocked = anyPrevTimedOut;
                 }
+
             }
 
             // 2. Check Completion for THIS Level
@@ -382,10 +387,16 @@ async function isLevelUnlocked(participantId, levelTitle) {
 
     // Check all previous levels
     for (let i = 0; i < targetLevelIndex; i++) {
-        const prevLevel = levels[i];
-        const joinedExamInPrevLevel = participant.exams.find(e => e.title === prevLevel.title);
+        const prevLevelTitle = levels[i].title;
+        const examsInPrevLevel = allExams.filter(e => e.title === prevLevelTitle);
+        const joinedExamInPrevLevel = participant.exams.find(e => e.title === prevLevelTitle);
 
-        if (!joinedExamInPrevLevel) return false; // Haven't even joined previous level
+        if (!joinedExamInPrevLevel) {
+            // Check if ANY exam in that level has timed out
+            const anyTimedOut = examsInPrevLevel.some(e => e.endTime && new Date().getTime() > new Date(e.endTime).getTime());
+            if (!anyTimedOut) return false; // Not joined AND not timed out = Locked
+            continue; // Moving to next level check because this one timed out
+        }
 
         const prevQuestions = await prisma.question.findMany({
             where: { examId: joinedExamInPrevLevel.id },
@@ -413,6 +424,7 @@ async function isLevelUnlocked(participantId, levelTitle) {
     }
     return true;
 }
+
 
 // Updated helper to check if an exam is unlocked (wrapper for isLevelUnlocked)
 async function isExamUnlocked(participantId, examId) {
