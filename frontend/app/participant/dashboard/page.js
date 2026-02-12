@@ -415,21 +415,25 @@ export default function ParticipantDashboard() {
             const token = localStorage.getItem('participantToken')
             const response = await axios.post(
                 `${API_URL}/api/participant/join-exam`,
-                { examId: selectedExamId, code: enteredCode },
+                { code: enteredCode },
                 { headers: { Authorization: `Bearer ${token}` } }
             )
             // Refresh exams and questions so joined status is reflected and questions are loaded
-            await fetchExams()
-            await fetchQuestions(selectedExamId)
+            const freshExams = await fetchExams()
+            const newExamId = response.data.examId;
 
+            setSelectedExamId(newExamId)
             setIsExamJoined(true)
-            setJoinedExams(prev => new Set([...prev, selectedExamId]))
+            setJoinedExams(prev => new Set([...prev, newExamId]))
             setEnteredCode('')
-            setNotification({ message: `Successfully joined ${exams.find(e => e.id === selectedExamId)?.title || 'this level'}!`, type: 'success' })
+
+            const levelTitle = freshExams?.find(e => e.id === newExamId)?.title || 'this level'
+            setNotification({ message: `Successfully joined ${levelTitle}!`, type: 'success' })
         } catch (error) {
             setNotification({ message: error.response?.data?.error || 'Failed to join exam', type: 'error' })
         }
     }
+
 
     const handleLogout = () => {
         localStorage.removeItem('participantToken')
@@ -491,7 +495,8 @@ export default function ParticipantDashboard() {
                                         title={!level.unlocked ? 'Complete previous level to unlock' : ''}
                                     >
                                         {!level.unlocked && '🔒 '}
-                                        Level {idx + 1}{statusLabel}
+                                        {level.title}{statusLabel}
+
                                     </button>
                                 );
                             })}

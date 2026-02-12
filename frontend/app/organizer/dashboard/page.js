@@ -469,8 +469,9 @@ function QuestionsTab({ questions, exams, onRefresh, selectedQuestion, setSelect
                                 >
                                     <option value="">No Exam</option>
                                     {exams.map((exam) => (
-                                        <option key={exam.id} value={exam.id}>{exam.title}</option>
+                                        <option key={exam.id} value={exam.id}>{exam.title} ({exam.code})</option>
                                     ))}
+
                                 </select>
                             </div>
                         </div>
@@ -704,10 +705,16 @@ function QuestionsTab({ questions, exams, onRefresh, selectedQuestion, setSelect
                             <div>
                                 <h3 className="text-xl font-bold">{q.title}</h3>
                                 <div className="text-gray-400 text-sm space-y-1">
+                                    {q.examId && (
+                                        <p className="text-primary-400 font-semibold">
+                                            Exam: {exams.find(e => e.id === q.examId)?.title} ({exams.find(e => e.id === q.examId)?.code})
+                                        </p>
+                                    )}
                                     <p>Max Marks: {q.maxMarks || 100}</p>
                                     <p>Time Limit: {q.timeLimit || 5}s</p>
                                     <p>Memory Limit: {q.memoryLimit || 256}MB</p>
                                 </div>
+
                             </div>
                             <div className="flex space-x-2">
                                 <button

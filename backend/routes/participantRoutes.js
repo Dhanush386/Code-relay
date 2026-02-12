@@ -144,54 +144,61 @@ router.post('/login', async (req, res) => {
 });
 
 // Join an exam by verifying the exam code
+// Join an exam by verifying the exam code
 router.post('/join-exam', authenticateParticipant, async (req, res) => {
     try {
-        const { examId, code } = req.body;
+        const { code } = req.body;
 
-        if (!examId || !code) {
-            return res.status(400).json({ error: 'Exam ID and code are required' });
+        if (!code) {
+            return res.status(400).json({ error: 'Exam code is required' });
         }
 
-        // Get the exam
-        const exam = await prisma.exam.findUnique({
-            where: { id: parseInt(examId) }
+        // Find the exam globally by code
+        const exam = await prisma.exam.findFirst({
+            where: { code: { equals: code.trim(), mode: 'insensitive' } }
         });
 
         if (!exam) {
-            return res.status(404).json({ error: 'Exam not found' });
+            return res.status(404).json({ error: 'Invalid exam code' });
         }
 
-        // Verify the code (case-insensitive, trimmed)
-        if (exam.code.trim().toLowerCase() !== code.trim().toLowerCase()) {
-            return res.status(401).json({ error: 'Incorrect exam code' });
+        // Security: Check if level is unlocked
+        const unlocked = await isLevelUnlocked(req.participantId, exam.title);
+        if (!unlocked) {
+            return res.status(403).json({ error: 'This level is locked. Complete previous levels first.' });
         }
 
-        // Check if already joined
-        const participant = await prisma.participant.findUnique({
+        // Check if already joined ANY exam with this same title (level)
+        const participantJoined = await prisma.participant.findUnique({
             where: { id: req.participantId },
-            include: { exams: { where: { id: parseInt(examId) } } }
+            include: { exams: { where: { title: exam.title } } }
         });
 
-        if (participant.exams.length > 0) {
-            return res.json({ message: 'Already joined this exam', joined: true });
+        if (participantJoined.exams.length > 0) {
+            if (participantJoined.exams[0].id === exam.id) {
+                return res.json({ message: 'Already joined this exam', joined: true, examId: exam.id });
+            } else {
+                return res.status(400).json({ error: 'You have already joined a different exam for this level.' });
+            }
         }
 
-        // Add participant to exam (using implicit many-to-many)
+        // Add participant to exam
         await prisma.participant.update({
             where: { id: req.participantId },
             data: {
                 exams: {
-                    connect: { id: parseInt(examId) }
+                    connect: { id: exam.id }
                 }
             }
         });
 
-        res.json({ message: 'Successfully joined exam', joined: true, examId: parseInt(examId) });
+        res.json({ message: 'Successfully joined exam', joined: true, examId: exam.id });
     } catch (error) {
         console.error('Join exam error:', error);
         res.status(500).json({ error: 'Failed to join exam' });
     }
 });
+
 
 // Get all levels (exams) and their status for the current participant
 router.get('/exams', authenticateParticipant, async (req, res) => {
@@ -202,7 +209,7 @@ router.get('/exams', authenticateParticipant, async (req, res) => {
             include: { exams: { select: { id: true } } }
         });
 
-        const exams = await prisma.exam.findMany({
+        const allExams = await prisma.exam.findMany({
             orderBy: [{ sequence: 'asc' }, { createdAt: 'asc' }],
             select: {
                 id: true,
@@ -217,20 +224,100 @@ router.get('/exams', authenticateParticipant, async (req, res) => {
 
         const joinedExamIds = new Set(participant.exams.map(e => e.id));
 
-        const examStatus = [];
-        let previousUnlocked = true;
+        // Group exams by title (Levels)
+        const groupedExams = [];
+        allExams.forEach(exam => {
+            let group = groupedExams.find(g => g.title === exam.title);
+            if (!group) {
+                group = {
+                    title: exam.title,
+                    sequence: exam.sequence,
+                    exams: []
+                };
+                groupedExams.push(group);
+            }
+            group.exams.push(exam);
+        });
 
+        const examStatus = [];
+        let previousLevelUnlocked = true;
         const now = new Date();
-        for (let i = 0; i < exams.length; i++) {
-            const exam = exams[i];
+
+        for (let i = 0; i < groupedExams.length; i++) {
+            const group = groupedExams[i];
+
+            // Check if ANY exam in this group is joined
+            const joinedExam = group.exams.find(e => joinedExamIds.has(e.id));
+            const joined = !!joinedExam;
+
             let unlocked = false;
             let completed = false;
             let isLive = false;
+            let currentExam = joinedExam || group.exams[0]; // Logic base for status if not joined
 
-            // Check if exam is live based on current time
-            if (exam.startTime || exam.endTime) {
-                const start = exam.startTime ? new Date(exam.startTime) : null;
-                const end = exam.endTime ? new Date(exam.endTime) : null;
+            // 1. Check if Level is Unlocked
+            if (i === 0) {
+                unlocked = true;
+            } else if (previousLevelUnlocked) {
+                const prevLevel = groupedExams[i - 1];
+                const prevJoinedExam = prevLevel.exams.find(e => joinedExamIds.has(e.id));
+
+                if (prevJoinedExam) {
+                    const prevQuestions = await prisma.question.findMany({
+                        where: { examId: prevJoinedExam.id },
+                        select: { id: true }
+                    });
+
+                    if (prevQuestions.length > 0) {
+                        const prevSubmissions = await prisma.submission.findMany({
+                            where: {
+                                participantId: req.participantId,
+                                questionId: { in: prevQuestions.map(q => q.id) },
+                                status: 'COMPLETED'
+                            },
+                            distinct: ['questionId']
+                        });
+
+                        const prevCompleted = prevSubmissions.length === prevQuestions.length;
+                        let timedOut = false;
+                        if (prevJoinedExam.endTime) {
+                            timedOut = now.getTime() > new Date(prevJoinedExam.endTime).getTime();
+                        }
+                        unlocked = prevCompleted || timedOut;
+                    } else {
+                        unlocked = true; // No questions = automatic unlock next
+                    }
+                } else {
+                    unlocked = false; // Haven't joined previous level yet
+                }
+            }
+
+            // 2. Check Completion for THIS Level
+            if (joinedExam) {
+                const currentQuestions = await prisma.question.findMany({
+                    where: { examId: joinedExam.id },
+                    select: { id: true }
+                });
+                if (currentQuestions.length > 0) {
+                    const currentSubmissions = await prisma.submission.findMany({
+                        where: {
+                            participantId: req.participantId,
+                            questionId: { in: currentQuestions.map(q => q.id) },
+                            status: 'COMPLETED'
+                        },
+                        distinct: ['questionId']
+                    });
+                    completed = currentSubmissions.length === currentQuestions.length;
+                } else {
+                    completed = true;
+                }
+            }
+
+            // 3. Check if Live
+            const targetExam = joinedExam || group.exams[0];
+            if (targetExam.startTime || targetExam.endTime) {
+                const start = targetExam.startTime ? new Date(targetExam.startTime) : null;
+                const end = targetExam.endTime ? new Date(targetExam.endTime) : null;
                 const nowTime = now.getTime();
 
                 if (start && end) {
@@ -241,71 +328,23 @@ router.get('/exams', authenticateParticipant, async (req, res) => {
                     isLive = nowTime <= end.getTime();
                 }
             } else {
-                isLive = true; // No time limit = always live
+                isLive = true;
             }
 
-            if (i === 0) {
-                unlocked = true;
-            } else if (previousUnlocked) {
-                // ... same unlock logic ...
-                const prevExam = exams[i - 1];
-                const prevQuestions = await prisma.question.findMany({
-                    where: { examId: prevExam.id },
-                    select: { id: true }
-                });
+            previousLevelUnlocked = unlocked;
 
-                if (prevQuestions.length > 0) {
-                    const prevSubmissions = await prisma.submission.findMany({
-                        where: {
-                            participantId: req.participantId,
-                            questionId: { in: prevQuestions.map(q => q.id) },
-                            status: 'COMPLETED'
-                        },
-                        distinct: ['questionId']
-                    });
-
-                    const completed = prevSubmissions.length === prevQuestions.length;
-
-                    // NEW: Also check if previous exam has timed out
-                    let timedOut = false;
-                    if (prevExam.endTime) {
-                        timedOut = new Date().getTime() > new Date(prevExam.endTime).getTime();
-                    }
-
-                    unlocked = completed || timedOut;
-                } else {
-                    unlocked = false;
-                }
-            }
-
-            // Check if THIS level is completed
-            const currentQuestions = await prisma.question.findMany({
-                where: { examId: exam.id },
-                select: { id: true }
-            });
-            if (currentQuestions.length > 0) {
-                const currentSubmissions = await prisma.submission.findMany({
-                    where: {
-                        participantId: req.participantId,
-                        questionId: { in: currentQuestions.map(q => q.id) },
-                        status: 'COMPLETED'
-                    },
-                    distinct: ['questionId']
-                });
-                completed = currentSubmissions.length === currentQuestions.length;
-            }
-
-            previousUnlocked = unlocked;
-            const joined = joinedExamIds.has(exam.id);
-            const needsCode = !joined;
             examStatus.push({
-                ...exam,
-                code: exam.code,
+                id: targetExam.id, // Current joined ID or fallback
+                title: group.title,
+                description: targetExam.description,
                 unlocked,
                 joined,
-                needsCode,
+                needsCode: !joined,
                 completed,
-                isLive
+                isLive,
+                startTime: targetExam.startTime,
+                endTime: targetExam.endTime,
+                sequence: group.sequence
             });
         }
 
@@ -316,21 +355,40 @@ router.get('/exams', authenticateParticipant, async (req, res) => {
     }
 });
 
-// Helper to check if an exam is unlocked for a participant
-async function isExamUnlocked(participantId, examId) {
-    const exams = await prisma.exam.findMany({
-        orderBy: [{ sequence: 'asc' }, { createdAt: 'asc' }]
+
+// Helper to check if a level (by title) is unlocked for a participant
+async function isLevelUnlocked(participantId, levelTitle) {
+    const allExams = await prisma.exam.findMany({
+        orderBy: [{ sequence: 'asc' }, { createdAt: 'asc' }],
+        select: { id: true, title: true, sequence: true, endTime: true }
     });
 
-    const targetExamIndex = exams.findIndex(e => e.id === examId);
-    if (targetExamIndex === -1) return false;
-    if (targetExamIndex === 0) return true; // First level is always unlocked
+    // Grouping by title to find level sequence
+    const levels = [];
+    allExams.forEach(exam => {
+        if (!levels.some(l => l.title === exam.title)) {
+            levels.push({ title: exam.title, sequence: exam.sequence });
+        }
+    });
 
-    // Check if all previous levels are completed
-    for (let i = 0; i < targetExamIndex; i++) {
-        const prevExam = exams[i];
+    const targetLevelIndex = levels.findIndex(l => l.title === levelTitle);
+    if (targetLevelIndex === -1) return false;
+    if (targetLevelIndex === 0) return true; // First level always unlocked
+
+    const participant = await prisma.participant.findUnique({
+        where: { id: participantId },
+        include: { exams: true }
+    });
+
+    // Check all previous levels
+    for (let i = 0; i < targetLevelIndex; i++) {
+        const prevLevel = levels[i];
+        const joinedExamInPrevLevel = participant.exams.find(e => e.title === prevLevel.title);
+
+        if (!joinedExamInPrevLevel) return false; // Haven't even joined previous level
+
         const prevQuestions = await prisma.question.findMany({
-            where: { examId: prevExam.id },
+            where: { examId: joinedExamInPrevLevel.id },
             select: { id: true }
         });
 
@@ -344,11 +402,9 @@ async function isExamUnlocked(participantId, examId) {
         });
 
         const completed = prevSubmissions.length === prevQuestions.length;
-
-        // NEW: Also check if previous exam has timed out
         let timedOut = false;
-        if (prevExam.endTime) {
-            timedOut = new Date().getTime() > new Date(prevExam.endTime).getTime();
+        if (joinedExamInPrevLevel.endTime) {
+            timedOut = new Date().getTime() > new Date(joinedExamInPrevLevel.endTime).getTime();
         }
 
         if (!completed && !timedOut && prevQuestions.length > 0) {
@@ -356,6 +412,13 @@ async function isExamUnlocked(participantId, examId) {
         }
     }
     return true;
+}
+
+// Updated helper to check if an exam is unlocked (wrapper for isLevelUnlocked)
+async function isExamUnlocked(participantId, examId) {
+    const exam = await prisma.exam.findUnique({ where: { id: examId }, select: { title: true } });
+    if (!exam) return false;
+    return isLevelUnlocked(participantId, exam.title);
 }
 
 // Get questions for exam (WITHOUT hidden testcases)
